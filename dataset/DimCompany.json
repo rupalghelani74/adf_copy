@@ -1,0 +1,53 @@
+{
+	"name": "DimCompany",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "sql_datalab3_kubrick",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": [
+			{
+				"name": "dimcompany",
+				"type": "int",
+				"precision": 10
+			},
+			{
+				"name": "conum",
+				"type": "varchar"
+			},
+			{
+				"name": "coname",
+				"type": "varchar"
+			},
+			{
+				"name": "city",
+				"type": "varchar"
+			},
+			{
+				"name": "state",
+				"type": "varchar"
+			},
+			{
+				"name": "country",
+				"type": "varchar"
+			},
+			{
+				"name": "StartDate",
+				"type": "datetime2",
+				"scale": 0
+			},
+			{
+				"name": "EndDate",
+				"type": "datetime2",
+				"scale": 0
+			}
+		],
+		"typeProperties": {
+			"schema": "dportas",
+			"table": "dimcompany"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}
