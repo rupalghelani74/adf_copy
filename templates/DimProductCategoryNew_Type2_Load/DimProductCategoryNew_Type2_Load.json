@@ -1,0 +1,218 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"type": "string",
+			"metadata": "Data Factory name"
+		},
+		"AzureSqlDatabase1": {
+			"type": "string"
+		}
+	},
+	"variables": {
+		"factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('factoryName'), '/DimProductCategoryNew_Type2_Load')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "Data flow1",
+						"type": "ExecuteDataFlow",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "7.00:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"dataflow": {
+								"referenceName": "DimProductCategory_DP",
+								"type": "DataFlowReference"
+							},
+							"compute": {
+								"coreCount": 8,
+								"computeType": "General"
+							},
+							"traceLevel": "Fine"
+						}
+					}
+				],
+				"annotations": [],
+				"lastPublishTime": "2021-03-11T21:52:32Z"
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/dataflows/DimProductCategory_DP')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/DimProductCategory_DP')]",
+			"type": "Microsoft.DataFactory/factories/dataflows",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"type": "MappingDataFlow",
+				"typeProperties": {
+					"sources": [
+						{
+							"dataset": {
+								"referenceName": "ProductCategory",
+								"type": "DatasetReference"
+							},
+							"name": "productcat"
+						},
+						{
+							"dataset": {
+								"referenceName": "dimProductCategory",
+								"type": "DatasetReference"
+							},
+							"name": "DimProductCategory",
+							"description": "Current rows in DimEmployees DW table"
+						}
+					],
+					"sinks": [
+						{
+							"dataset": {
+								"referenceName": "dimProductCategory",
+								"type": "DatasetReference"
+							},
+							"name": "sinkNew"
+						},
+						{
+							"dataset": {
+								"referenceName": "dimProductCategory",
+								"type": "DatasetReference"
+							},
+							"name": "sinkInactive",
+							"description": "Close out the old version of the row"
+						},
+						{
+							"dataset": {
+								"referenceName": "dimProductCategory",
+								"type": "DatasetReference"
+							},
+							"name": "sinkChanges",
+							"description": "New row with changes"
+						}
+					],
+					"transformations": [
+						{
+							"name": "productcatWithSurrogate"
+						},
+						{
+							"name": "DoesRowExist"
+						},
+						{
+							"name": "RowHasChanged"
+						},
+						{
+							"name": "productCatWithDates"
+						},
+						{
+							"name": "AlterRow1"
+						}
+					],
+					"script": "source(output(\n\t\tProductCategoryID as integer,\n\t\tParentProductCategoryID as integer,\n\t\tName as string,\n\t\trowguid as string,\n\t\tModifiedDate as timestamp\n\t),\n\tallowSchemaDrift: true,\n\tvalidateSchema: false,\n\tignoreNoFilesFound: false,\n\tisolationLevel: 'READ_UNCOMMITTED',\n\tformat: 'table',\n\twildcardPaths:['*.*']) ~> productcat\nsource(output(\n\t\tProductCategory as integer,\n\t\tname as string,\n\t\tParentProductCategoryID as integer,\n\t\tStartDate as timestamp,\n\t\tEndDate as timestamp\n\t),\n\tallowSchemaDrift: true,\n\tvalidateSchema: false,\n\tignoreNoFilesFound: false,\n\tisolationLevel: 'READ_UNCOMMITTED',\n\tformat: 'table') ~> DimProductCategory\nproductcat, DimProductCategory lookup(productcat@Name == DimProductCategory@name,\n\tmultiple: false,\n\tpickup: 'first',\n\tdesc(EndDate, true),\n\tbroadcast: 'auto')~> productcatWithSurrogate\nproductCatWithDates split(isNull(ProductCategory),\n\tdisjoint: false) ~> DoesRowExist@(NewRow, CurrentRow)\nDoesRowExist@CurrentRow, DimProductCategory exists(DoesRowExist@CurrentRow@ProductCategory == DimProductCategory@ProductCategory\n\t&& DoesRowExist@CurrentRow@Name == DimProductCategory@name\n\t&& coalesce(ProductCategoryID,0) == coalesce(DimProductCategory@ParentProductCategoryID,0),\n\tnegate:true,\n\tbroadcast: 'auto')~> RowHasChanged\nproductcatWithSurrogate derive(StartDate = currentTimestamp(),\n\t\tEndDate = toTimestamp(\"9999-12-31 23:59:59\"),\n\t\tRowStatusNew = \"NEW\",\n\t\tRowStatusChange = \"CHANGE\") ~> productCatWithDates\nRowHasChanged alterRow(updateIf(1==1)) ~> AlterRow1\nDoesRowExist@NewRow sink(input(\n\t\tProductCategory as integer,\n\t\tname as string,\n\t\tParentProductCategoryID as integer,\n\t\tStartDate as timestamp,\n\t\tEndDate as timestamp\n\t),\n\tallowSchemaDrift: true,\n\tvalidateSchema: false,\n\tdeletable:false,\n\tinsertable:true,\n\tupdateable:false,\n\tupsertable:false,\n\tformat: 'table',\n\tbatchSize: 50,\n\tmapColumn(\n\t\tProductCategory,\n\t\tname = DoesRowExist@NewRow@Name,\n\t\tParentProductCategoryID = DoesRowExist@NewRow@ParentProductCategoryID,\n\t\tStartDate,\n\t\tEndDate\n\t),\n\tpartitionBy('roundRobin', 4),\n\tsaveOrder: 1,\n\terrorHandlingOption: 'stopOnFirstError') ~> sinkNew\nAlterRow1 sink(input(\n\t\tProductCategory as integer,\n\t\tname as string,\n\t\tParentProductCategoryID as integer,\n\t\tStartDate as timestamp,\n\t\tEndDate as timestamp\n\t),\n\tallowSchemaDrift: true,\n\tvalidateSchema: false,\n\tdeletable:false,\n\tinsertable:false,\n\tupdateable:true,\n\tupsertable:false,\n\tkeys:['ProductCategory'],\n\tskipKeyWrites:true,\n\tformat: 'table',\n\tbatchSize: 50,\n\tmapColumn(\n\t\tProductCategory,\n\t\tEndDate = StartDate\n\t),\n\tpartitionBy('roundRobin', 4),\n\tsaveOrder: 2,\n\terrorHandlingOption: 'stopOnFirstError') ~> sinkInactive\nRowHasChanged sink(input(\n\t\tProductCategory as integer,\n\t\tname as string,\n\t\tParentProductCategoryID as integer,\n\t\tStartDate as timestamp,\n\t\tEndDate as timestamp\n\t),\n\tallowSchemaDrift: true,\n\tvalidateSchema: false,\n\tdeletable:false,\n\tinsertable:true,\n\tupdateable:false,\n\tupsertable:false,\n\tformat: 'table',\n\tmapColumn(\n\t\tProductCategory,\n\t\tname = DoesRowExist@CurrentRow@Name,\n\t\tParentProductCategoryID = DoesRowExist@CurrentRow@ParentProductCategoryID,\n\t\tStartDate,\n\t\tEndDate\n\t),\n\tskipDuplicateMapInputs: true,\n\tskipDuplicateMapOutputs: true,\n\tsaveOrder: 3,\n\terrorHandlingOption: 'stopOnFirstError') ~> sinkChanges"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/ProductCategory')]",
+				"[concat(variables('factoryId'), '/datasets/dimProductCategory')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ProductCategory')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('AzureSqlDatabase1')]",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "AzureSqlTable",
+				"schema": [
+					{
+						"name": "ProductCategoryID",
+						"type": "int",
+						"precision": 10
+					},
+					{
+						"name": "ParentProductCategoryID",
+						"type": "int",
+						"precision": 10
+					},
+					{
+						"name": "Name",
+						"type": "nvarchar"
+					},
+					{
+						"name": "rowguid",
+						"type": "uniqueidentifier"
+					},
+					{
+						"name": "ModifiedDate",
+						"type": "datetime",
+						"precision": 23,
+						"scale": 3
+					}
+				],
+				"typeProperties": {
+					"schema": "SalesLT",
+					"table": "ProductCategory"
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/dimProductCategory')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('AzureSqlDatabase1')]",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "AzureSqlTable",
+				"schema": [
+					{
+						"name": "ProductCategory",
+						"type": "int",
+						"precision": 10
+					},
+					{
+						"name": "name",
+						"type": "nvarchar"
+					},
+					{
+						"name": "ParentProductCategoryID",
+						"type": "int",
+						"precision": 10
+					},
+					{
+						"name": "StartDate",
+						"type": "datetime2",
+						"scale": 0
+					},
+					{
+						"name": "EndDate",
+						"type": "datetime2",
+						"scale": 0
+					}
+				],
+				"typeProperties": {
+					"schema": "dportas",
+					"table": "dimProductCategory"
+				}
+			},
+			"dependsOn": []
+		}
+	]
+}
